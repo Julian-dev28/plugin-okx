@@ -4,11 +4,13 @@ A plugin for integrating OKX DEX capabilities within the ElizaOS ecosystem, curr
 
 ## Description
 
-OKX DEX is a trading aggregator that this plugin integrates with Eliza. Currently, this plugin only supports:
+OKX DEX is a trading aggregator that this plugin integrates with Eliza. Currently, this plugin supports:
 
-- Trading tokens on the Solana network
-- Direct routing through single liquidity pools
-- Price impact protection and slippage controls
+- Retrieving chain data
+- Listing available tokens
+- Retrieving liquidity providers
+- Retrieving quotes and transaction data for swaps
+- Executing token swaps
 
 ## Installation
 
@@ -79,6 +81,24 @@ OKX_WALLET_PRIVATE_KEY=<your_solana_wallet_private_key>
 OPENAI_API_KEY=<your_openai_api_key>
 ```
 
+Alternatively, you can configure the API keys in the character file:
+```json
+	"name": "Your Character",
+	"plugins": ["@elizaos/plugin-okx"],
+	"settings": {
+    "secrets": {
+		"OKX_API_KEY": "<your_api_key>",
+		"OKX_SECRET_KEY": "<your_secret_key>",
+		"OKX_API_PASSPHRASE": "<your_passphrase>",
+		"OKX_PROJECT_ID": "<your_project_id>",
+		"OKX_SOLANA_RPC_URL": "<your_solana_rpc_url>",
+		"OKX_WALLET_ADDRESS": "<your_solana_wallet_public_key>",
+		"OKX_WALLET_PRIVATE_KEY": "<your_solana_wallet_private_key>",
+		"OPENAI_API_KEY": "<your_openai_api_key>"
+	}
+}
+```
+
 3. Install plugin dependencies:
 ```bash
 pnpm install --no-frozen-lockfile
@@ -91,7 +111,9 @@ pnpm build
 
 5. Deploy the agent by running:
 ```bash
-pnpm start --characters="characters/trump.character.json"
+pnpm start --characters="characters/your_character.character.json"
+```
+
 ```
 
 6. Deploy the FE locally by running:
