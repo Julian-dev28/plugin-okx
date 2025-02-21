@@ -1,0 +1,81 @@
+{
+    "name": "@elizaos-plugins/plugin-okx",
+    "version": "0.0.1",
+    "type": "module",
+    "main": "dist/index.js",
+    "module": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "exports": {
+        "./package.json": "./package.json",
+        ".": {
+            "import": {
+                "@elizaos/source": "./src/index.ts",
+                "types": "./dist/index.d.ts",
+                "default": "./dist/index.js"
+            }
+        }
+    },
+    "files": [
+        "dist"
+    ],
+    "dependencies": {
+        "@solana/web3.js": "^1.98.0",
+        "@types/bn.js": "^5.1.6",
+        "@types/bs58": "^4.0.4",
+        "@types/node": "^22.10.5",
+        "bn.js": "^5.2.1",
+        "bs58": "^6.0.0",
+        "crypto-js": "^4.2.0",
+        "dotenv": "^16.4.7",
+        "tsup": "8.3.5"
+    },
+    "devDependencies": {
+        "@biomejs/biome": "1.5.3",
+        "tweetnacl": "^1.0.3",
+        "typescript": "^5.7.3"
+    },
+    "scripts": {
+        "build": "tsup --format esm --dts",
+        "dev": "tsup --format esm --dts --watch",
+        "lint": "biome check src/",
+        "lint:fix": "biome check --apply src/",
+        "format": "biome format src/",
+        "format:fix": "biome format --write src/"
+    },
+    "peerDependencies": {
+        "whatwg-url": "7.1.0"
+    },
+    "agentConfig": {
+      "pluginType": "elizaos:client:1.0.0",
+      "pluginParameters": {
+        "OKX_PROJECT_ID": {
+          "type": "string",
+          "description": "OKX Project ID for identifying the project"
+        },
+        "OKX_API_KEY": {
+          "type": "string",
+          "description": "OKX API key for accessing exchange services"
+        },
+        "OKX_SECRET_KEY": {
+          "type": "string",
+          "description": "OKX Secret key for authentication"
+        },
+        "OKX_API_PASSPHRASE": {
+          "type": "string",
+          "description": "OKX Passphrase for authentication"
+        },
+        "OKX_WALLET_ADDRESS": {
+          "type": "string",
+          "description": "Solana wallet address for OKX transactions"
+        },
+        "OKX_WALLET_PRIVATE_KEY": {
+          "type": "string",
+          "description": "Private key for the Solana wallet"
+        },
+        "OKX_SOLANA_RPC_URL": {
+          "type": "string",
+          "description": "Solana RPC URL for blockchain interactions"
+        }
+      }
+    }
+}
