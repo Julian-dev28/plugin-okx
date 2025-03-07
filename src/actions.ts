@@ -259,7 +259,7 @@ function getActionHandler(
             switch (actionName) {
                 case "GET_CHAIN_DATA":
                     const chainData =
-                        await client.dex.getSupportedChains("501");
+                        await client.dex.getChainData("501");
                     result = {
                         chains: chainData.data.map((chain) => ({
                             id: chain.chainId,

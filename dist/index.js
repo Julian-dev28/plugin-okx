@@ -5,397 +5,33 @@ import {
   composeContext
 } from "@elizaos/core";
 
-// src/okx/core/http-client.ts
-import CryptoJS from "crypto-js";
-var APIError = class extends Error {
-  constructor(message, status, statusText, responseBody, requestDetails) {
-    super(message);
-    this.status = status;
-    this.statusText = statusText;
-    this.responseBody = responseBody;
-    this.requestDetails = requestDetails;
-    this.name = "APIError";
-  }
-};
-var HTTPClient = class {
-  config;
-  constructor(config) {
-    this.config = {
-      baseUrl: "https://www.okx.com",
-      maxRetries: 3,
-      timeout: 3e4,
-      ...config
-    };
-  }
-  getHeaders(timestamp, method, path, queryString = "") {
-    const stringToSign = timestamp + method + path + queryString;
-    return {
-      "Content-Type": "application/json",
-      "OK-ACCESS-KEY": this.config.apiKey,
-      "OK-ACCESS-SIGN": CryptoJS.enc.Base64.stringify(
-        CryptoJS.HmacSHA256(stringToSign, this.config.secretKey)
-      ),
-      "OK-ACCESS-TIMESTAMP": timestamp,
-      "OK-ACCESS-PASSPHRASE": this.config.apiPassphrase,
-      "OK-ACCESS-PROJECT": this.config.projectId
-    };
-  }
-  async handleErrorResponse(response, requestDetails) {
-    let responseBody;
-    try {
-      responseBody = await response.json();
-    } catch (e) {
-      responseBody = await response.text();
-    }
-    throw new APIError(
-      `HTTP error! status: ${response.status}`,
-      response.status,
-      response.statusText,
-      responseBody,
-      requestDetails
-    );
-  }
-  async request(method, path, params) {
-    const timestamp = (/* @__PURE__ */ new Date()).toISOString();
-    const cleanParams = params ? Object.fromEntries(
-      Object.entries(params).filter(([_, v]) => v !== void 0)
-    ) : void 0;
-    const queryString = cleanParams ? "?" + new URLSearchParams(cleanParams).toString() : "";
-    const headers = this.getHeaders(timestamp, method, path, queryString);
-    const requestDetails = {
-      method,
-      path,
-      params: cleanParams,
-      queryString,
-      url: `${this.config.baseUrl}${path}${queryString}`
-    };
-    if (process.env.NODE_ENV === "development") {
-      console.log("Request Details:", {
-        url: requestDetails.url,
-        method: requestDetails.method,
-        headers: {
-          ...headers,
-          "OK-ACCESS-SIGN": "***",
-          // Hide sensitive data
-          "OK-ACCESS-KEY": "***",
-          "OK-ACCESS-PASSPHRASE": "***"
-        },
-        params: requestDetails.params
-      });
-    }
-    let retries = 0;
-    while (retries < this.config.maxRetries) {
-      try {
-        const response = await fetch(`${this.config.baseUrl}${path}${queryString}`, {
-          method,
-          headers
-        });
-        if (!response.ok) {
-          await this.handleErrorResponse(response, requestDetails);
-        }
-        const data = await response.json();
-        if (process.env.NODE_ENV === "development") {
-          console.log("Response:", JSON.stringify(data, null, 2));
-        }
-        if (data.code !== "0") {
-          throw new APIError(
-            `API Error: ${data.msg}`,
-            response.status,
-            response.statusText,
-            data,
-            requestDetails
-          );
-        }
-        return data;
-      } catch (error) {
-        if (error instanceof APIError) {
-          if (retries === this.config.maxRetries - 1) throw error;
-        } else {
-          if (retries === this.config.maxRetries - 1) {
-            throw new APIError(
-              error instanceof Error ? error.message : "Unknown error",
-              void 0,
-              void 0,
-              void 0,
-              requestDetails
-            );
-          }
-        }
-        retries++;
-        await new Promise((resolve) => setTimeout(resolve, 1e3 * retries));
-      }
-    }
-    throw new Error("Max retries exceeded");
-  }
-};
-
-// src/okx/api/dex.ts
-import base58 from "bs58";
-import * as solanaWeb3 from "@solana/web3.js";
-import { Connection } from "@solana/web3.js";
-var DexAPI = class {
-  constructor(client, config) {
-    this.client = client;
-    this.config = config;
-    this.config.networks = {
-      ...this.defaultNetworkConfigs,
-      ...config.networks || {}
-    };
-  }
-  defaultNetworkConfigs = {
-    "501": {
-      id: "501",
-      explorer: "https://solscan.io/tx",
-      defaultSlippage: "0.5",
-      maxSlippage: "1",
-      computeUnits: 3e5,
-      confirmationTimeout: 6e4,
-      maxRetries: 3
-    }
-  };
-  getNetworkConfig(chainId) {
-    const networkConfig = this.config.networks?.[chainId];
-    if (!networkConfig) {
-      throw new Error(
-        `Network configuration not found for chain ${chainId}`
-      );
-    }
-    return networkConfig;
-  }
-  // Convert params to API format
-  toAPIParams(params) {
-    const apiParams = {};
-    for (const [key, value] of Object.entries(params)) {
-      if (value !== void 0) {
-        if (key === "autoSlippage") {
-          apiParams[key] = value ? "true" : "false";
-        } else {
-          apiParams[key] = String(value);
-        }
-      }
-    }
-    return apiParams;
-  }
-  async getQuote(params) {
-    return this.client.request(
-      "GET",
-      "/api/v5/dex/aggregator/quote",
-      this.toAPIParams(params)
-    );
-  }
-  async getLiquidity(chainId) {
-    return this.client.request(
-      "GET",
-      "/api/v5/dex/aggregator/get-liquidity",
-      this.toAPIParams({ chainId })
-    );
-  }
-  async getSupportedChains(chainId) {
-    return this.client.request(
-      "GET",
-      "/api/v5/dex/aggregator/supported/chain",
-      this.toAPIParams({ chainId })
-    );
-  }
-  async getSwapData(params) {
-    if (!params.slippage && !params.autoSlippage) {
-      throw new Error("Either slippage or autoSlippage must be provided");
-    }
-    if (params.slippage) {
-      const slippageValue = parseFloat(params.slippage);
-      if (isNaN(slippageValue) || slippageValue < 0 || slippageValue > 1) {
-        throw new Error("Slippage must be between 0 and 1");
-      }
-    }
-    if (params.autoSlippage && !params.maxAutoSlippage) {
-      throw new Error(
-        "maxAutoSlippageBps must be provided when autoSlippage is enabled"
-      );
-    }
-    return this.client.request(
-      "GET",
-      "/api/v5/dex/aggregator/swap",
-      this.toAPIParams(params)
-    );
-  }
-  async getTokens(chainId) {
-    return this.client.request(
-      "GET",
-      "/api/v5/dex/aggregator/all-tokens",
-      this.toAPIParams({ chainId })
-    );
-  }
-  async executeSwap(params) {
-    const swapData = await this.getSwapData(params);
-    switch (params.chainId) {
-      case "501":
-        return this.executeSolanaSwap(swapData, params);
-      default:
-        throw new Error(
-          `Chain ${params.chainId} not supported for swap execution`
-        );
-    }
-  }
-  // Update the executeSwap function to properly handle decimals
-  async executeSolanaSwap(swapData, params) {
-    const networkConfig = this.getNetworkConfig(params.chainId);
-    if (!this.config.solana) {
-      throw new Error("Solana configuration required");
-    }
-    const quoteData = swapData.data?.[0];
-    if (!quoteData?.routerResult) {
-      throw new Error("Invalid swap data: missing router result");
-    }
-    const { routerResult } = quoteData;
-    if (!routerResult.fromToken?.decimal || !routerResult.toToken?.decimal) {
-      throw new Error(
-        `Missing decimal information for tokens: ${routerResult.fromToken?.tokenSymbol} -> ${routerResult.toToken?.tokenSymbol}`
-      );
-    }
-    const txData = quoteData.tx?.data;
-    if (!txData) {
-      throw new Error("Missing transaction data");
-    }
-    try {
-      const feePayer = solanaWeb3.Keypair.fromSecretKey(
-        base58.decode(this.config.solana.privateKey)
-      );
-      const connection = new Connection(
-        this.config.solana.connection.rpcUrl,
-        {
-          commitment: "confirmed",
-          wsEndpoint: this.config.solana.connection.wsEndpoint,
-          confirmTransactionInitialTimeout: networkConfig.confirmationTimeout
-        }
-      );
-      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
-      const decodedTransaction = base58.decode(txData);
-      let transaction;
-      try {
-        transaction = solanaWeb3.VersionedTransaction.deserialize(
-          decodedTransaction
-        );
-        transaction.message.recentBlockhash = blockhash;
-      } catch {
-        transaction = solanaWeb3.Transaction.from(decodedTransaction);
-        transaction.recentBlockhash = blockhash;
-        transaction.feePayer = feePayer.publicKey;
-        const computeBudgetIx = solanaWeb3.ComputeBudgetProgram.setComputeUnitLimit({
-          units: this.config.solana.computeUnits || 3e5
-        });
-        transaction.add(computeBudgetIx);
-      }
-      if (transaction instanceof solanaWeb3.VersionedTransaction) {
-        transaction.sign([feePayer]);
-      } else {
-        transaction.sign(feePayer);
-      }
-      const signature = await connection.sendRawTransaction(
-        transaction.serialize(),
-        {
-          skipPreflight: false,
-          maxRetries: networkConfig.maxRetries,
-          preflightCommitment: "confirmed"
-        }
-      );
-      const confirmation = await connection.confirmTransaction(
-        {
-          signature,
-          blockhash,
-          lastValidBlockHeight
-        },
-        "confirmed"
-      );
-      if (confirmation.value.err) {
-        throw new Error(
-          `Transaction failed: ${JSON.stringify(
-            confirmation.value.err
-          )}`
-        );
-      }
-      const fromDecimals = parseInt(routerResult.fromToken.decimal);
-      const toDecimals = parseInt(routerResult.toToken.decimal);
-      const displayFromAmount = (Number(routerResult.fromTokenAmount) / Math.pow(10, fromDecimals)).toFixed(6);
-      const displayToAmount = (Number(routerResult.toTokenAmount) / Math.pow(10, toDecimals)).toFixed(6);
-      return {
-        success: true,
-        transactionId: signature,
-        explorerUrl: `${networkConfig.explorer}/${signature}`,
-        details: {
-          fromToken: {
-            symbol: routerResult.fromToken.tokenSymbol,
-            amount: displayFromAmount,
-            decimal: routerResult.fromToken.decimal
-          },
-          toToken: {
-            symbol: routerResult.toToken.tokenSymbol,
-            amount: displayToAmount,
-            decimal: routerResult.toToken.decimal
-          },
-          priceImpact: routerResult.priceImpactPercentage
-        }
-      };
-    } catch (error) {
-      console.error("Swap execution failed:", error);
-      throw error;
-    }
-  }
-};
-
-// src/okx/api/bridge.ts
-var BridgeAPI = class {
-  constructor(client) {
-    this.client = client;
-  }
-  // Get tokens supported for cross-chain transfers
-  async getSupportedTokens(chainId) {
-    return this.client.request("GET", "/api/v5/dex/cross-chain/supported/tokens", { chainId });
-  }
-  // Get supported bridges for a chain
-  async getSupportedBridges(chainId) {
-    return this.client.request("GET", "/api/v5/dex/cross-chain/supported/bridges", { chainId });
-  }
-  // Get token pairs available for bridging
-  async getBridgeTokenPairs(fromChainId) {
-    return this.client.request(
-      "GET",
-      "/api/v5/dex/cross-chain/supported/bridge-tokens-pairs",
-      { fromChainId }
-    );
-  }
-  // Get quote for a cross-chain swap
-  async getCrossChainQuote(params) {
-    const slippageValue = parseFloat(params.slippage);
-    if (isNaN(slippageValue) || slippageValue < 2e-3 || slippageValue > 0.5) {
-      throw new Error("Slippage must be between 0.002 (0.2%) and 0.5 (50%)");
-    }
-    return this.client.request("GET", "/api/v5/dex/cross-chain/quote", params);
-  }
-  // Build cross-chain swap transaction
-  async buildCrossChainSwap(params) {
-    if (!params.userWalletAddress) {
-      throw new Error("userWalletAddress is required");
-    }
-    return this.client.request("GET", "/api/v5/dex/cross-chain/build-tx", params);
-  }
-};
-
 // src/okx/core/client.ts
+import { DexAPI, BridgeAPI } from "@okx-dex/okx-dex-sdk";
+import { HTTPClient } from "@okx-dex/okx-dex-sdk/dist/core/http-client";
+import { Keypair } from "@solana/web3.js";
+import base58 from "bs58";
 var OKXDexClient = class {
-  config;
-  httpClient;
   dex;
   bridge;
   constructor(config) {
-    this.config = {
+    const defaultConfig = {
       baseUrl: "https://www.okx.com",
       maxRetries: 3,
       timeout: 3e4,
       ...config
     };
-    this.httpClient = new HTTPClient(this.config);
-    this.dex = new DexAPI(this.httpClient, this.config);
-    this.bridge = new BridgeAPI(this.httpClient);
+    const configWithWallet = {
+      ...defaultConfig,
+      solana: defaultConfig.solana ? {
+        ...defaultConfig.solana,
+        walletAddress: Keypair.fromSecretKey(
+          base58.decode(defaultConfig.solana.privateKey)
+        ).publicKey.toString()
+      } : void 0
+    };
+    const httpClient = new HTTPClient(configWithWallet);
+    this.dex = new DexAPI(httpClient, configWithWallet);
+    this.bridge = new BridgeAPI(httpClient);
   }
 };
 
@@ -414,6 +50,7 @@ function formatSolanaAddress(address) {
   return address;
 }
 async function extractSwapParams(message, client) {
+  var _a;
   let messageContent = "";
   if (typeof message.content === "string") {
     messageContent = message.content;
@@ -456,9 +93,9 @@ async function extractSwapParams(message, client) {
     );
     const fromMatch = messageContent.match(/from\s*([\w.-]+)/i) || messageContent.match(/(?:^|\s)([\w.-]+)(?:\s|$)/);
     const toMatch = messageContent.match(/to\s*([\w.-]+)/i);
-    amount = amount || amountMatch?.[1] || "";
-    fromToken = fromToken || fromMatch?.[1] || "";
-    toToken = toToken || toMatch?.[1] || "";
+    amount = amount || (amountMatch == null ? void 0 : amountMatch[1]) || "";
+    fromToken = fromToken || (fromMatch == null ? void 0 : fromMatch[1]) || "";
+    toToken = toToken || (toMatch == null ? void 0 : toMatch[1]) || "";
   }
   try {
     fromToken = formatSolanaAddress(fromToken);
@@ -493,7 +130,7 @@ async function extractSwapParams(message, client) {
       // Dummy amount to get token info
       slippage: "0.1"
     });
-    if (preQuote.code !== "0" || !preQuote.data?.[0]) {
+    if (preQuote.code !== "0" || !((_a = preQuote.data) == null ? void 0 : _a[0])) {
       throw new Error(preQuote.msg || "Failed to get token information");
     }
     const fromDecimals = parseInt(preQuote.data[0].fromToken.decimal);
@@ -557,13 +194,14 @@ Price impact: ${quote.priceImpactPercentage}%`
 }
 function getActionHandler(actionName, actionDescription, client) {
   return async (runtime, message, state, options, callback) => {
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     let currentState = state ?? await runtime.composeState(message);
     currentState = await runtime.updateRecentMessageState(currentState);
     try {
       let result;
       switch (actionName) {
         case "GET_CHAIN_DATA":
-          const chainData = await client.dex.getSupportedChains("501");
+          const chainData = await client.dex.getChainData("501");
           result = {
             chains: chainData.data.map((chain) => ({
               id: chain.chainId,
@@ -590,7 +228,7 @@ function getActionHandler(actionName, actionDescription, client) {
             "Received quote result:",
             JSON.stringify(quoteResult, null, 2)
           );
-          if (quoteResult.code === "0" && quoteResult.data?.[0]) {
+          if (quoteResult.code === "0" && ((_a = quoteResult.data) == null ? void 0 : _a[0])) {
             result = formatQuoteResponse(quoteResult.data[0]);
           } else {
             throw new Error(
@@ -611,7 +249,7 @@ function getActionHandler(actionName, actionDescription, client) {
             // maxAutoSlippage: "1000",
             userWalletAddress: process.env.OKX_WALLET_ADDRESS
           });
-          if (swapResponse.code !== "0" || !swapResponse.data?.[0]) {
+          if (swapResponse.code !== "0" || !((_b = swapResponse.data) == null ? void 0 : _b[0])) {
             throw new Error(
               swapResponse.msg || "Failed to get swap transaction data"
             );
@@ -648,14 +286,14 @@ function getActionHandler(actionName, actionDescription, client) {
             "Received swap data response:",
             JSON.stringify(swapResponse, null, 2)
           );
-          if (swapResponse.code !== "0" || !swapResponse.data?.[0]) {
+          if (swapResponse.code !== "0" || !((_c = swapResponse.data) == null ? void 0 : _c[0])) {
             throw new Error(
-              swapResponse?.msg || "Failed to get swap data"
+              (swapResponse == null ? void 0 : swapResponse.msg) || "Failed to get swap data"
             );
           }
           const routerResult = swapResponse.data[0];
           const txData = swapResponse.data[0].tx;
-          if (!routerResult.routerResult?.fromToken?.decimal || !routerResult.routerResult?.toToken?.decimal) {
+          if (!((_e = (_d = routerResult.routerResult) == null ? void 0 : _d.fromToken) == null ? void 0 : _e.decimal) || !((_g = (_f = routerResult.routerResult) == null ? void 0 : _f.toToken) == null ? void 0 : _g.decimal)) {
             console.error(
               "Missing decimal information in token data:",
               routerResult
@@ -700,8 +338,8 @@ function getActionHandler(actionName, actionDescription, client) {
                 decimal: swapResult.toToken.decimal
               },
               priceImpact: swapResult.priceImpactPercentage + "%",
-              route: swapResult.quoteCompareList[0]?.dexName || "Unknown",
-              txData: txData?.data
+              route: ((_h = swapResult.quoteCompareList[0]) == null ? void 0 : _h.dexName) || "Unknown",
+              txData: txData == null ? void 0 : txData.data
             },
             summary: `Swap executed successfully!
 Swapped ${displayFromAmount} ${swapResult.fromToken.tokenSymbol} for approximately ${displayToAmount} ${swapResult.toToken.tokenSymbol}
@@ -723,7 +361,7 @@ View on Explorer: ${executeResult.explorerUrl}`
         }),
         modelClass: ModelClass.SMALL
       });
-      callback?.({
+      callback == null ? void 0 : callback({
         text: response,
         content: result
       });
@@ -738,7 +376,7 @@ View on Explorer: ${executeResult.explorerUrl}`
         }),
         modelClass: ModelClass.SMALL
       });
-      callback?.({
+      callback == null ? void 0 : callback({
         text: errorResponse,
         content: { error: errorMessage }
       });
@@ -883,7 +521,10 @@ async function getOKXActions(getSetting) {
 
 // src/index.ts
 var OKXPlugin = async (character) => {
-  const getSetting = (key) => character.settings?.secrets?.[key] || process.env[key];
+  const getSetting = (key) => {
+    var _a, _b;
+    return ((_b = (_a = character.settings) == null ? void 0 : _a.secrets) == null ? void 0 : _b[key]) || process.env[key];
+  };
   const requiredSettings = [
     "OKX_API_KEY",
     "OKX_SECRET_KEY",

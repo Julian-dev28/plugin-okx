@@ -1,25 +1,34 @@
 // src/core/client.ts
-import { HTTPClient } from "./http-client";
-import { DexAPI } from "../api/dex";
-import { BridgeAPI } from "../api/bridge";
+import { DexAPI, BridgeAPI } from '@okx-dex/okx-dex-sdk';
+import { HTTPClient } from '@okx-dex/okx-dex-sdk/dist/core/http-client';
 import type { OKXConfig } from "../types";
+import { Keypair } from "@solana/web3.js";
+import base58 from "bs58";
 
 export class OKXDexClient {
-    private config: OKXConfig;
-    private httpClient: HTTPClient;
     public dex: DexAPI;
     public bridge: BridgeAPI;
 
     constructor(config: OKXConfig) {
-        this.config = {
+        const defaultConfig = {
             baseUrl: "https://www.okx.com",
             maxRetries: 3,
             timeout: 30000,
             ...config,
         };
 
-        this.httpClient = new HTTPClient(this.config);
-        this.dex = new DexAPI(this.httpClient, this.config);
-        this.bridge = new BridgeAPI(this.httpClient);
+        const configWithWallet = {
+            ...defaultConfig,
+            solana: defaultConfig.solana ? {
+                ...defaultConfig.solana,
+                walletAddress: Keypair.fromSecretKey(
+                    base58.decode(defaultConfig.solana.privateKey)
+                ).publicKey.toString()
+            } : undefined
+        };
+
+        const httpClient = new HTTPClient(configWithWallet);
+        this.dex = new DexAPI(httpClient, configWithWallet);
+        this.bridge = new BridgeAPI(httpClient);
     }
 }

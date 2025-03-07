@@ -28,7 +28,7 @@ export const OKXPlugin = async (character: Character): Promise<Plugin> => {
             providers: [],
             evaluators: [],
             services: [],
-            actions: [],
+            actions: []
         };
     }
 
@@ -48,7 +48,7 @@ export const OKXPlugin = async (character: Character): Promise<Plugin> => {
             providers: [],
             evaluators: [],
             services: [],
-            actions,
+            actions
         };
     } catch (error) {
         console.error("Error initializing OKX plugin:", error);
